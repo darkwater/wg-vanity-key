@@ -1,9 +1,8 @@
 use std::{
     env,
-    mem::MaybeUninit,
     sync::atomic::{AtomicUsize, Ordering},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use base64::{
@@ -12,13 +11,15 @@ use base64::{
     Engine,
 };
 use core_affinity::CoreId;
-use nacl::public_box::KEY_LENGTH;
+use rand_core::OsRng;
+use x25519_dalek_fiat::{PublicKey, StaticSecret};
 
 static GENERATED: AtomicUsize = AtomicUsize::new(0);
 
 const BASE64: GeneralPurpose =
     GeneralPurpose::new(&alphabet::STANDARD, GeneralPurposeConfig::new());
 
+const KEY_LENGTH: usize = 32;
 const KEY_B64_LENGTH: usize = 44;
 
 fn main() {
@@ -26,23 +27,29 @@ fn main() {
 
     let (tx, rx) = std::sync::mpsc::channel::<[[u8; KEY_LENGTH]; 2]>();
 
+    let start = Instant::now();
+
     thread::spawn(move || loop {
         core_affinity::set_for_current(CoreId { id: 0 });
-        thread::sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_secs(60));
         let cycles = GENERATED.swap(0, Ordering::Relaxed);
-        eprintln!("{cycles} cycles/s");
+        eprintln!("{cycles} cycles/min");
     });
 
     let checker = thread::spawn(move || {
         core_affinity::set_for_current(CoreId { id: 0 });
         let mut pk64 = [0u8; KEY_B64_LENGTH];
-        for [sk, pk] in rx.iter() {
-            let _ = BASE64.encode_slice(&pk, &mut pk64);
+        for [sk, pk] in rx {
+            let _ = BASE64.encode_slice(pk, &mut pk64);
 
             args.retain(|s| {
                 let retain = !pk64.starts_with(s.as_bytes());
                 if !retain {
-                    eprintln!("found one! {}", String::from_utf8(pk64.to_vec()).unwrap());
+                    eprintln!(
+                        "Found one! {} (after {:.1} minutes)",
+                        String::from_utf8(pk64.to_vec()).unwrap(),
+                        start.elapsed().as_secs_f64() / 60.,
+                    );
                     println!(
                         "sk: {} pk: {}",
                         BASE64.encode(sk),
@@ -59,7 +66,7 @@ fn main() {
         }
     });
 
-    let _generators = core_affinity::get_core_ids()
+    let generators = core_affinity::get_core_ids()
         .unwrap()
         .into_iter()
         .map(|core_id| {
@@ -68,25 +75,18 @@ fn main() {
                 core_affinity::set_for_current(core_id);
 
                 loop {
-                    let sk = rand::random::<[u8; KEY_LENGTH]>();
-                    let pk = unsafe { nacl::public_box::generate_pubkey(&sk).unwrap_unchecked() };
+                    let sk = StaticSecret::new(OsRng);
+                    let pk = PublicKey::from(&sk);
 
-                    let pk_array = MaybeUninit::uninit();
-                    unsafe {
-                        std::ptr::copy(pk.as_ptr(), pk_array.as_ptr() as *mut u8, KEY_LENGTH);
-                    }
-
-                    let _ = tx.send([sk, unsafe {
-                        std::mem::transmute::<MaybeUninit<[u8; KEY_LENGTH]>, [u8; KEY_LENGTH]>(
-                            pk_array,
-                        )
-                    }]);
+                    let _ = tx.send([sk.to_bytes(), pk.to_bytes()]);
 
                     GENERATED.fetch_add(1, Ordering::Relaxed);
                 }
             });
         })
         .collect::<Vec<_>>();
+
+    eprintln!("Spawned {} threads...", generators.len());
 
     checker.join().unwrap();
 }
