@@ -8,12 +8,6 @@ edition = "2021"
 [dependencies]
 base64 = "0.21.5"
 core_affinity = "0.8.1"
-crossbeam-channel = "0.5.8"
-indicatif = { version = "0.17.7", features = ["rayon"] }
 nacl = "0.5.3"
 rand = "0.8.5"
 rayon = "1.8.0"
-
-[profile.release]
-lto = true
-codegen-units = 1
