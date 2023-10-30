@@ -6,6 +6,11 @@ This will fully utilize your CPU by randomly generating private keys and
 calculating their public keys. If a public key matches any of the given strings,
 save it.
 
+## GPU Branch
+
+It works, but is about a hundred times slower than the CPU version.
+Optimization is needed and I don't know how GPUs work.
+
 ## Installation
 
 ```
